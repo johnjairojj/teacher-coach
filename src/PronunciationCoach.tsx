@@ -108,18 +108,21 @@ function Coach({ phrase }: { phrase: string }) {
       // Audio remoto
       const remoteStream = new MediaStream();
       pc.ontrack = (ev) => {
-        console.log("[RTC] ontrack (remote audio)");
-        remoteStream.addTrack(ev.track);
-        const el = audioRef.current as any;
-        if (el) {
-          el.srcObject = remoteStream;
-          el.muted = false;      //Fuerza desmutearlo
-          el.volume = 1.0;
-          el.playsInline = true;
-          try {el.play?.(); } catch {);
-          }
-        }
-      };
+      console.log("[RTC] ontrack (remote audio)");
+      remoteStream.addTrack(ev.track);
+      const el = audioRef.current as any;
+      if (el) {
+      el.srcObject = remoteStream;
+      el.muted = false;
+      el.volume = 1.0;
+      el.playsInline = true;
+      try {
+      el.play?.();
+      } catch (err) {
+      console.warn("[AUDIO] play() fue bloqueado:", err);
+      }
+    }
+  };
 
       // DataChannel para texto/eventos
       const dc = pc.createDataChannel("oai-events");
