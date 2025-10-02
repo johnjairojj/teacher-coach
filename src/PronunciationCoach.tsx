@@ -82,63 +82,88 @@ function Coach({ phrase }: { phrase: string }) {
       setConnecting(true);
       setError(null);
 
+      // 1) Token efímero desde tu función serverless
       const ses = await fetch("/api/session", { method: "POST" });
-      if (!ses.ok) throw new Error("Error al pedir token efímero");
+      if (!ses.ok) throw new Error("Error al pedir token efímero (/api/session)");
       const { client_secret, url } = await ses.json();
       const EPHEMERAL_KEY: string | undefined = client_secret?.value;
-      if (!EPHEMERAL_KEY) throw new Error("Token inválido");
+      if (!EPHEMERAL_KEY) throw new Error("Token inválido desde /api/session");
 
+      // 2) URL Realtime
       const REALTIME_URL: string =
         url && typeof url === "string" && url.startsWith("http")
           ? url
           : `https://api.openai.com/v1/realtime?model=${MODEL}`;
 
+      // 3) RTCPeerConnection
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
 
-      // Audio remoto
+      // Audio remoto (stream y reproducción)
       const remoteStream = new MediaStream();
       pc.ontrack = (ev) => {
         remoteStream.addTrack(ev.track);
-        if (audioRef.current) {
-        (audioRef.current as any).srcObject = remoteStream;
-        (audioRef.current as any).muted = false;
-        (audioRef.current as any).volume = 1.0;
-        (audioRef.current as any).playsInline = true;
-        try { (audioRef.current as any).play?.(); } catch {}
+        const el = audioRef.current as any;
+        if (el) {
+          el.srcObject = remoteStream;
+          el.muted = false;
+          el.volume = 1.0;
+          el.playsInline = true;
+          try {
+            el.play?.();
+          } catch {}
         }
-
       };
 
-      // DataChannel
+      // 4) DataChannel para eventos / texto
       const dc = pc.createDataChannel("oai-events");
       dcRef.current = dc;
+
+      dc.onopen = () => {
+        // Enviamos el prompt de sistema al abrir
+        dc.send(
+          JSON.stringify({
+            type: "session.update",
+            session: { instructions: systemPrompt },
+          })
+        );
+      };
 
       dc.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
+
+          // El modelo envía deltas de texto por el canal de datos
           if (msg.type === "response.delta") {
             if (expectingJsonRef.current && msg.delta?.type === "output_text.delta") {
               jsonBufferRef.current += msg.delta.text || "";
             }
           }
+
           if (msg.type === "response.completed") {
             if (expectingJsonRef.current) tryParseJsonBuffer();
             expectingJsonRef.current = false;
           }
-        } catch {}
+
+          if (msg.type === "error") {
+            console.error("[DC] ERROR:", msg?.error?.code, msg?.error?.message);
+          }
+        } catch {
+          // mensajes no-JSON (binarios), ignorar
+        }
       };
 
-      // Micrófono
+      // 5) Micrófono local
       const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
       mic.getTracks().forEach((t) => pc.addTrack(t, mic));
 
-      // Asegura que recibimos audio del modelo (downlink)
+      // **CLAVE**: pedir downlink de audio del modelo
       pc.addTransceiver("audio", { direction: "recvonly" });
-      
-      // SDP
+
+      // 6) SDP: Offer -> POST -> Answer
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+
       const sdpResponse = await fetch(REALTIME_URL, {
         method: "POST",
         body: offer.sdp,
@@ -148,7 +173,7 @@ function Coach({ phrase }: { phrase: string }) {
           "OpenAI-Beta": "realtime=v1",
         },
       });
-      if (!sdpResponse.ok) throw new Error("Fallo SDP");
+      if (!sdpResponse.ok) throw new Error("Fallo en intercambio SDP con Realtime");
       const answerSdp = await sdpResponse.text();
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
@@ -170,6 +195,7 @@ function Coach({ phrase }: { phrase: string }) {
   function cleanup() {
     try {
       dcRef.current?.close();
+      pcRef.current?.getSenders().forEach((s) => s.track && s.track.stop());
       pcRef.current?.close();
     } catch {}
     pcRef.current = null;
@@ -182,10 +208,12 @@ function Coach({ phrase }: { phrase: string }) {
     const dc = dcRef.current;
     if (!dc || dc.readyState !== "open") return;
 
+    // limpiar UI
     setScore(null);
     setTranscript("");
     setTips([]);
 
+    // armar instrucciones (audio + JSON)
     expectingJsonRef.current = true;
     jsonBufferRef.current = "";
 
@@ -199,7 +227,7 @@ function Coach({ phrase }: { phrase: string }) {
       type: "response.create",
       response: {
         modalities: ["audio", "text"],
-        temperature: 0.7,
+        temperature: 0.7, // Realtime suele requerir >= 0.6
         instructions: instr,
       },
     };
@@ -213,12 +241,24 @@ function Coach({ phrase }: { phrase: string }) {
     expectingJsonRef.current = false;
     if (!raw) return;
 
+    // a veces llega envuelto en ```json ... ```
+    const cleaned = raw
+      .replace(/^```(?:json)?/i, "")
+      .replace(/```$/i, "")
+      .trim();
+
     try {
-      const parsed = JSON.parse(raw);
-      setScore(parsed.score || null);
-      setTranscript(parsed.transcript_en || "");
-      setTips(Array.isArray(parsed.tips_es) ? parsed.tips_es : []);
-    } catch {}
+      const parsed = JSON.parse(cleaned) as Partial<Feedback>;
+      setScore(
+        typeof parsed.score === "number"
+          ? Math.max(0, Math.min(100, Math.round(parsed.score)))
+          : null
+      );
+      setTranscript(typeof parsed.transcript_en === "string" ? parsed.transcript_en : "");
+      setTips(Array.isArray(parsed.tips_es) ? parsed.tips_es.slice(0, 3) : []);
+    } catch (err) {
+      console.error("[JSON] Parse error:", err, "\nRAW =", raw);
+    }
   }
 
   return (
@@ -226,6 +266,9 @@ function Coach({ phrase }: { phrase: string }) {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-medium">Sesión de voz</p>
+          <p className="text-xs text-neutral-600">
+            Micrófono → OpenAI Realtime → Audio + JSON (feedback)
+          </p>
         </div>
         <div className="flex gap-2">
           {!connected ? (
@@ -244,6 +287,12 @@ function Coach({ phrase }: { phrase: string }) {
               Desconectar
             </button>
           )}
+          <button
+            onClick={() => setMuted((m) => !m)}
+            className="px-3 py-2 rounded-xl border text-sm"
+          >
+            {muted ? "Unmute" : "Mute"}
+          </button>
           <button
             onClick={pedirAudioYJson}
             disabled={!connected}
@@ -311,3 +360,4 @@ export function TeacherApp() {
 }
 
 export default TeacherApp;
+
