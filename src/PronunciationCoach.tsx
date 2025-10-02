@@ -113,13 +113,10 @@ function Coach({ phrase }: { phrase: string }) {
         const el = audioRef.current as any;
         if (el) {
           el.srcObject = remoteStream;
-          el.muted = false;
+          el.muted = false;      //Fuerza desmutearlo
           el.volume = 1.0;
           el.playsInline = true;
-          try {
-            el.play?.();
-          } catch (err) {
-            console.warn("[AUDIO] play() fue bloqueado:", err);
+          try {el.play?.(); } catch {);
           }
         }
       };
@@ -129,16 +126,14 @@ function Coach({ phrase }: { phrase: string }) {
       dcRef.current = dc;
 
       dc.onopen = () => {
-        console.log("[DC] OPEN");
-        setDcOpen(true);
-        // Fijamos instrucciones de sistema apenas abra
-        dc.send(
-          JSON.stringify({
-            type: "session.update",
-            session: { instructions: systemPrompt },
-          })
-        );
-      };
+      console.log("[DC] OPEN");
+      setDcOpen(true);
+      dc.send(JSON.stringify({
+      type: "session.update",
+      session: { instructions: systemPrompt, voice: "alloy" },
+      }));
+    };
+
       dc.onclose = () => {
         console.log("[DC] CLOSE");
         setDcOpen(false);
@@ -175,27 +170,25 @@ function Coach({ phrase }: { phrase: string }) {
       const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
       mic.getTracks().forEach((t) => pc.addTrack(t, mic));
 
-      // **CLAVE**: pedir audio remoto (downlink)
+      // **CLAVE**: pedir audio remoto (downlink) ANTES del offer
       pc.addTransceiver("audio", { direction: "recvonly" });
 
       // SDP: Offer -> POST -> Answer
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      console.log("[SDP] POST", REALTIME_URL);
       const sdpResponse = await fetch(REALTIME_URL, {
-        method: "POST",
-        body: offer.sdp,
-        headers: {
-          Authorization: `Bearer ${EPHEMERAL_KEY}`,
-          "Content-Type": "application/sdp",
-          "OpenAI-Beta": "realtime=v1",
-        },
-      });
-      console.log("[SDP] status =", sdpResponse.status);
-      if (!sdpResponse.ok) throw new Error("Fallo SDP con Realtime");
-      const answerSdp = await sdpResponse.text();
-      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      method: "POST",
+      body: offer.sdp,
+      headers: {
+      Authorization: `Bearer ${EPHEMERAL_KEY}`,
+      "Content-Type": "application/sdp",
+      "OpenAI-Beta": "realtime=v1",
+      },
+    });
+    if (!sdpResponse.ok) throw new Error("Fallo SDP con Realtime");
+    const answerSdp = await sdpResponse.text();
+    await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
       setConnected(true);
       setConnecting(false);
@@ -253,16 +246,14 @@ function Coach({ phrase }: { phrase: string }) {
 
   // Importante: NADA de 'response.audio' ni 'response.response_format'
   const payload = {
-    type: "response.create",
-    response: {
-      modalities: ["audio", "text"], // pedimos audio del modelo + texto por DC
-      temperature: 0.7,              // >= 0.6 para evitar el error de mínimo
-      instructions: instr,
-    },
-  } as const;
-
-  console.log("[SEND] response.create");
-  dc.send(JSON.stringify(payload));
+  type: "response.create",
+  response: {
+    modalities: ["audio", "text"],
+    temperature: 0.7,
+    instructions: instr,
+  },
+};
+dc.send(JSON.stringify(payload));
 }
 
   function tryParseJsonBuffer() {
@@ -338,7 +329,7 @@ function Coach({ phrase }: { phrase: string }) {
         </div>
       </div>
 
-      <audio ref={audioRef} autoPlay muted={muted} className="mt-4 w-full" />
+      <audio ref={audioRef} autoPlay muted={false} className="mt-4 w-full" />
       {error && <div className="mt-3 text-sm text-red-600">{error}</div>}
 
       <div className="grid md:grid-cols-2 gap-4 mt-4">
