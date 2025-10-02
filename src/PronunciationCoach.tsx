@@ -118,8 +118,7 @@ function Coach({ phrase }: { phrase: string }) {
       el.playsInline = true;
       try {
       el.play?.();
-      } catch (err) {
-      console.warn("[AUDIO] play() fue bloqueado:", err);
+      } catch (err) {console.warn("[AUDIO] play() fue bloqueado:", err);
       }
     }
   };
