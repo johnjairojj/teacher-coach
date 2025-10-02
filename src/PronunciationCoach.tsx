@@ -226,40 +226,44 @@ function Coach({ phrase }: { phrase: string }) {
   }
 
   function pedirAudioYJson() {
-    const dc = dcRef.current;
-    if (!dc || dc.readyState !== "open") {
-      console.warn("[UI] DataChannel AUN NO ABRE: espera 1–2s y reintenta");
-      return;
-    }
-
-    // limpiar UI
-    setScore(null);
-    setTranscript("");
-    setTips([]);
-
-    // armar instrucciones (audio + JSON)
-    expectingJsonRef.current = true;
-    jsonBufferRef.current = "";
-
-    const instr = [
-      buildAudioInstructions(phrase),
-      "---",
-      buildJsonInstructions(phrase),
-    ].join("\n");
-
-    const payload = {
-      type: "response.create",
-      response: {
-        modalities: ["audio", "text"],
-        temperature: 0.7,           // >= 0.6 recomendado por Realtime
-        instructions: instr,
-        audio: { voice: "alloy" },  // <-- fuerza salida de audio
-      },
-    };
-
-    console.log("[SEND] response.create");
-    dc.send(JSON.stringify(payload));
+  const dc = dcRef.current;
+  if (!dc || dc.readyState !== "open") {
+    console.warn("[UI] DataChannel aún no está OPEN. Intenta de nuevo en 1–2s.");
+    return;
   }
+
+  // Limpia UI antes de la nueva corrección
+  setScore(null);
+  setTranscript("");
+  setTips([]);
+
+  // Vamos a capturar el JSON por data channel
+  expectingJsonRef.current = true;
+  jsonBufferRef.current = "";
+
+  // Instrucciones: audio (demo en inglés) + JSON (tips en español)
+  const instr = [
+    buildAudioInstructions(phrase),
+    "---",
+    "Ahora devuelve SOLO un objeto JSON (sin texto extra, sin markdown) con esta forma exacta:",
+    '{"score":<0-100>,"transcript_en":"<lo que entendiste en ingles del usuario>","tips_es":["tip 1","tip 2","tip 3"]}',
+    "Las 3 recomendaciones van en español, concisas y accionables.",
+    `Frase objetivo: ${phrase}`,
+  ].join("\n");
+
+  // Importante: NADA de 'response.audio' ni 'response.response_format'
+  const payload = {
+    type: "response.create",
+    response: {
+      modalities: ["audio", "text"], // pedimos audio del modelo + texto por DC
+      temperature: 0.7,              // >= 0.6 para evitar el error de mínimo
+      instructions: instr,
+    },
+  } as const;
+
+  console.log("[SEND] response.create");
+  dc.send(JSON.stringify(payload));
+}
 
   function tryParseJsonBuffer() {
     const raw = jsonBufferRef.current.trim();
