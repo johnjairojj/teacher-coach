@@ -92,10 +92,8 @@ function Coach({ phrase }: { phrase: string }) {
       const EPHEMERAL_KEY: string | undefined = client_secret?.value;
       if (!EPHEMERAL_KEY) throw new Error("Token inválido desde /api/session");
 
-      const REALTIME_URL: string =
-        url && typeof url === "string" && url.startsWith("http")
-          ? url
-          : `https://api.openai.com/v1/realtime?model=${MODEL}`;
+      // Usar relay interno en vez de pegarle directo a api.openai.com
+      const REALTIME_URL = `/api/realtime?model=${MODEL}`;
 
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
