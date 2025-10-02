@@ -101,11 +101,13 @@ function Coach({ phrase }: { phrase: string }) {
       pc.ontrack = (ev) => {
         remoteStream.addTrack(ev.track);
         if (audioRef.current) {
-          (audioRef.current as any).srcObject = remoteStream;
-          try {
-            (audioRef.current as any).play?.();
-          } catch {}
+        (audioRef.current as any).srcObject = remoteStream;
+        (audioRef.current as any).muted = false;
+        (audioRef.current as any).volume = 1.0;
+        (audioRef.current as any).playsInline = true;
+        try { (audioRef.current as any).play?.(); } catch {}
         }
+
       };
 
       // DataChannel
@@ -131,6 +133,9 @@ function Coach({ phrase }: { phrase: string }) {
       const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
       mic.getTracks().forEach((t) => pc.addTrack(t, mic));
 
+      // Asegura que recibimos audio del modelo (downlink)
+      pc.addTransceiver("audio", { direction: "recvonly" });
+      
       // SDP
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
